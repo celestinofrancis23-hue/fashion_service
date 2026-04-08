@@ -61,7 +61,7 @@ try {
 
     const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
 
-    const fileUrl = `${process.env.R2_PUBLIC_URL}/${fileName}`;
+    const fileUrl = `${process.env.R2_PUBLIC_BASE_URL}/${fileName}`;
 
     res.json({
       uploadUrl,
