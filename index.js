@@ -51,7 +51,7 @@ try {
     if (fileType.includes("png")) extension = "png";
     if (fileType.includes("mp4")) extension = "mp4";
 
-    const fileName = `uploads/${uuidv4()}.${extension}`;
+    const fileName = `render-service/${uuidv4()}.${extension}`;
 
     const command = new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME,
