@@ -29,15 +29,16 @@ const BUCKET = process.env.R2_BUCKET_NAME;
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_BASE_URL;
 
 const POSES = [
-  "standing straight, full body, facing forward",
-  "side profile, full body, walking pose",
-  "three quarter view, full body, relaxed standing",
-  "sitting pose, upper body visible",
-  "close-up, upper body, slight angle"
+  "standing straight, full body, facing forward, arms relaxed at sides",
+  "walking pose, full body, slight movement, one foot forward",
+  "side profile view, full body, looking slightly toward camera",
+  "sitting on a stool, legs crossed, upper body visible, relaxed pose",
+  "close-up shot, waist up, slight three-quarter angle, hands in pockets"
 ];
 
 function buildPrompt(description, pose) {
-  return `ultra realistic female model, ${description}, ${pose}, minimalist fashion, neutral tones, soft lighting, grey studio background, clean aesthetic, high fashion editorial, full body, no logos, no text on clothing, professional photography`;
+  const seed = Math.floor(Math.random() * 999999);
+  return `ultra realistic female model, ${description}, ${pose}, minimalist fashion, neutral tones, soft diffused lighting, clean grey studio background, high fashion editorial photography, no logos, no text, professional model pose, seed${seed}`;
 }
 
 // upload buffer para R2
@@ -90,10 +91,6 @@ app.post("/generate-outfit", async (req, res) => {
         width: 768,
         height: 1344,
       };
-      if (referenceUrl) {
-        input.image = referenceUrl;
-        input.strength = 0.75;
-      }
       return replicate.run("black-forest-labs/flux-dev", { input });
     });
 
