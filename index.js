@@ -1,152 +1,87 @@
-const express = require("express");
-const ffmpeg = require("fluent-ffmpeg");
-const ffmpegPath = require("ffmpeg-static");
-const fs = require("fs");
-const path = require("path");
-const cors = require("cors");
-const axios = require("axios");
-
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
-const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
-const { v4: uuidv4 } = require("uuid");
-
 require("dotenv").config();
-
-ffmpeg.setFfmpegPath(ffmpegPath);
+const express = require("express");
+const cors = require("cors");
+const Replicate = require("replicate");
 
 const app = express();
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PUT"],
-  allowedHeaders: ["Content-Type"]
-}));
+const PORT = process.env.PORT || 3000;
+
+app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "50mb" }));
 
-// =============================
-// CONFIG R2
-// =============================
-const s3 = new S3Client({
-  region: "auto",
-  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
+const replicate = new Replicate({
+  auth: process.env.REPLICATE_API_TOKEN,
 });
 
 // =============================
-// 🔗 ROUTE 1: GENERATE SIGNED URL
+// POSES
 // =============================
-app.post("/generate-upload-url", async (req, res) => {
-console.log("🔥 RECEBEU REQUEST");
-  console.log(req.body);  
-try {
-    const { fileType } = req.body;
-
-    if (!fileType) {
-      return res.status(400).json({ error: "fileType is required" });
-    }
-
-    let extension = "jpg";
-    if (fileType.includes("png")) extension = "png";
-    if (fileType.includes("mp4")) extension = "mp4";
-
-    const fileName = `render-service/${uuidv4()}.${extension}`;
-
-    const command = new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
-      Key: fileName,
-      ContentType: fileType,
-    });
-
-    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
-
-    const fileUrl = `${process.env.R2_PUBLIC_BASE_URL}/${fileName}`;
-
-    res.json({
-      uploadUrl,
-      fileUrl,
-    });
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to generate URL" });
-  }
-});
+const POSES = [
+  "standing straight, full body, facing forward",
+  "side profile, full body, walking pose",
+  "three quarter view, full body, relaxed standing",
+  "sitting pose, upper body visible",
+  "close-up, upper body, slight angle"
+];
 
 // =============================
-// 🎬 ROUTE 2: RENDER VIDEO
+// PROMPT BUILDER
 // =============================
-app.post("/render-video", async (req, res) => {
+function buildPrompt(description, pose) {
+  return `ultra realistic female model, ${description}, ${pose}, minimalist fashion, neutral tones, soft lighting, grey studio background, clean aesthetic, high fashion editorial, full body, no logos, no text on clothing, professional photography`;
+}
+
+// =============================
+// POST /generate-outfit
+// =============================
+app.post("/generate-outfit", async (req, res) => {
   try {
-    const { description, images } = req.body;
+    const { description, referenceImage } = req.body;
 
-    if (!images || images.length === 0) {
-      return res.status(400).json({ error: "No images provided" });
+    if (!description || description.trim() === "") {
+      return res.status(400).json({ error: "description is required" });
     }
 
-    console.log("Descrição:", description);
-    console.log("Imagens:", images);
+    console.log("🚀 Gerando outfit para:", description);
+    console.log("📸 Imagem de referência:", referenceImage ? "sim" : "não");
 
-    // 🔥 criar pasta temp
-    const tempDir = path.join(__dirname, "temp");
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir);
-    }
+    // gera 5 imagens em paralelo, uma por pose
+    const promises = POSES.map((pose) => {
+      const prompt = buildPrompt(description.trim(), pose);
 
-    const imagePaths = [];
+      const input = {
+        prompt,
+        num_inference_steps: 28,
+        guidance_scale: 3.5,
+        width: 768,
+        height: 1344,
+      };
 
-    // 🔥 baixar imagens do R2
-    for (let i = 0; i < images.length; i++) {
-      const url = images[i];
-      const filePath = path.join(tempDir, `img_${i}.png`);
+      // se tiver imagem de referência, inclui
+      if (referenceImage) {
+        input.image = referenceImage;
+        input.strength = 0.75;
+      }
 
-      const response = await axios({
-        url,
-        method: "GET",
-        responseType: "arraybuffer",
-      });
-
-      fs.writeFileSync(filePath, response.data);
-      imagePaths.push(filePath);
-    }
-
-    const outputPath = path.join(__dirname, "output.mp4");
-
-    // 🎬 criar vídeo slideshow
-    const command = ffmpeg();
-
-    imagePaths.forEach((img) => {
-      command.addInput(img).inputOptions(["-loop 1", "-t 2"]);
+      return replicate.run("black-forest-labs/flux-dev", { input });
     });
 
-    command
-      .outputOptions([
-        "-vf scale=1080:1920",
-        "-pix_fmt yuv420p",
-        "-r 30"
-      ])
-      .on("end", () => {
-        console.log("Vídeo criado com sucesso");
+    const results = await Promise.all(promises);
 
-        res.json({
-          status: "done",
-          video: "output.mp4"
-        });
-      })
-      .on("error", (err) => {
-        console.error("Erro FFmpeg:", err);
-        res.status(500).json({ error: "FFmpeg error" });
-      })
-      .mergeToFile(outputPath);
+    // cada resultado é um array com 1 URL
+    const images = results.map((r) => (Array.isArray(r) ? r[0] : r));
+
+    console.log("✅ Imagens geradas:", images.length);
+
+    return res.json({ images });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
+    console.error("❌ Erro:", err.message);
+    return res.status(500).json({ error: "Falha ao gerar imagens" });
   }
 });
 
 // =============================
-app.listen(3000, () => {
-  console.log("Render service running on port 3000");
+app.listen(PORT, () => {
+  console.log(`✅ Servidor rodando na porta ${PORT}`);
 });
